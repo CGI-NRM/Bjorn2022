@@ -1,0 +1,143 @@
+---
+title: "Björninventering Dalarnas, Gävleborgs och Värmlands län, 21 augusti-31 oktober 2022"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: readable
+    logo: naturhistoriska-riksmuseet.png
+    orientation: columns
+    vertical_layout: fill
+---
+  
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(readxl)
+library(dplyr)
+library(leaflet)
+library(ggplot2)
+library(wesanderson)
+library(RColorBrewer)
+library(leaflet.extras)
+library(lubridate)
+source("gps_convert.R")
+# Make colors accessible c(gray, orange, green)
+#plotcol <- c("#bcbcbc", 
+#             "#f8bc05", 
+#             "#1ace00") 
+plotcol <- c("gray", 
+             "orange", 
+             "green") 
+lan <- c("Dalarnas län (S)", "Gävleborgs län (S)", "Värmlands län
+(S)")
+
+DNA <- read_excel("Data/Progress.xlsx")
+names(DNA) <- c("Position","TubeID", "RackID", "Streckkod")
+bear <- read_excel("Data/rovbasedata2.xlsx")
+names(bear) <- c("Streckkod", "Art", "Provtyp", "Lat", "Long", "Datum", "Kommunnummer", "Kommun", "Lansnummer", "Lan")
+bear <- bear[bear$Lan %in% lan,]
+DNA <- DNA[!duplicated(DNA$Streckkod),]
+bearmap <- base::merge(bear, DNA, by = "Streckkod", all.x = TRUE)
+bearmap$TubeID[is.na(bearmap$TubeID)] <- 0
+bearmap$TubeID[bearmap$TubeID>1] <- 1
+bearmap$Genotyp <- 0
+
+gt <- read_excel("Data/Genotyped.xlsx")
+gtu <- unique(gt$gt)
+bearmap$Genotyp <- bearmap$Streckkod%in%gtu
+bearmap$Genotyp <- ifelse(bearmap$Genotyp, yes = 1, no = 0)
+
+
+bearmap <- gps_convert(data = bearmap, latitude = "Lat", longitude = "Long")
+bearmap$Datum <- as.Date(bearmap$Datum)
+
+bearmap$code <- ifelse(bearmap$TubeID + bearmap$Genotyp == 0, yes = "Registrerad", ifelse(bearmap$TubeID + bearmap$Genotyp > 1.9, yes = "Prov analyserat", no = "DNA extraherat"))
+bearmap$code <- factor(bearmap$code, levels = c("Registrerad", "DNA extraherat", "Prov analyserat"))
+#bearmap[order(as.character(bearmap$code), decreasing = FALSE),]
+
+```
+
+```{r}
+getColor <- function() {
+  sapply(bearmap$code, function(code) {
+  if(code == "Registrerad") {
+    plotcol[1]
+  } else if(code == "DNA extraherat") {
+    plotcol[2]
+   } else {
+    plotcol[3]
+  } })
+}
+
+icons <- awesomeIcons(
+  icon = 'ios-close',
+  iconColor = 'black',
+  library = 'ion',
+  markerColor = getColor()
+)
+```
+
+
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### Spillningsprover som inkommit till Naturhistoriska riksmuseet (NRM)
+
+```{r}
+# Mapping colors to the icons is done by eyeballing
+
+pal <- colorFactor(plotcol , domain = bearmap$code, ordered = TRUE)
+
+leaflet(bearmap) %>%
+      addTiles(group = "OSM") %>%
+      addProviderTiles(providers$OpenStreetMap,
+                       options = providerTileOptions(noWrap = TRUE)) %>%
+  addAwesomeMarkers(icon=icons, label=~as.character(Streckkod), group = "marker", clusterOptions = markerClusterOptions(), options = ) %>%
+  addLegend( pal=pal, values = ~levels(code), opacity=0.8, title = "Provstatus", position = "bottomleft") %>%
+  addSearchFeatures('marker', options = searchFeaturesOptions(zoom = 15,
+                                    openPopup = TRUE,
+                                    firstTipSubmit = TRUE,
+                                    autoCollapse = TRUE,
+                                    hideMarkerOnCollapse = FALSE)) %>%
+  hideGroup("marker")
+
+```
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Antal insamlade prover per dag sedan inventeringsstarten den 21 Augusti
+
+```{r}
+
+ggplot(as.data.frame(bearmap)) + aes(x = Datum) + geom_bar(alpha=0) + scale_y_continuous(name = "Insamlade prover per dag")
+
+```
+
+### inkomna prover fram till `r Sys.Date()`
+
+```{r}
+Bearsamples <- 0
+valueBox(Bearsamples,
+	 icon = "fa-clipboard-check",
+	 color = plotcol[1])
+```
+
+### DNA extraherat fram till `r Sys.Date()`
+
+```{r}
+dnaextract <- sum(bearmap$code == "DNA extraherat" | bearmap$code == "Prov analyserat")
+valueBox(dnaextract,
+	 icon = "fa-dna",
+	 color = plotcol[2])
+
+```
+
+### Färdiganalyserade prover `r Sys.Date()`
+
+```{r}
+genotyped <- sum(bearmap$code == "Prov analyserat")
+valueBox(genotyped,
+	 icon = "fa-paw",
+	 color = plotcol[3])
+```
